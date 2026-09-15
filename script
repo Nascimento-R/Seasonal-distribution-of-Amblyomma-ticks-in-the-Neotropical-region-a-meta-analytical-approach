@@ -1,1 +1,1727 @@
+#-------------------------------------------------------------------#	
+# Script - CARRAPATOS Amblyomma SPP. DA REGIÃO NEOTROPICAL: REVISÃO	#
+#		SISTEMÁTICA E META ANÁLISE SOBRE DISTRIBUIÇÃO SAZONAL		#	
+# data: 
+#-------------------------------------------------------------------#
 
+# Acesso ao diretório de trabalho 	
+rm(list = ls())
+setwd("C:/Users/rafae/OneDrive/Área de Trabalho/arquivos_meta")
+# Instalaçãoo e leitura de pacotes exigidos 
+if(!require(readxl)) install.packages("readxl")
+library(readxl)
+if(!require(tidyverse)) install.packages("tidyverse")
+library(tidyverse)
+if(!require(DataExplorer)) install.packages("DataExplorer")
+library(DataExplorer)
+if(!require(metafor)) install.packages("metafor")
+library(metafor)
+if(!require(EnvStats)) install.packages("EnvStats")
+library(EnvStats)
+if(!require(ape)) install.packages("ape")
+library(ape)
+if(!require(nortest)) install.packages("nortest")
+library(nortest)
+devtools::install_github("daniel1noble/orchaRd", force = TRUE)
+source(here("custom_func","custom_func.R"))
+library(orchaRd)
+#-------------------------------------------------------------------#
+# Análise de dados de Abundância média e Intensidade média			
+# Tamanhos de efeito são cálculados da mesma forma e utilizando a mesma base de dados
+#-------------------------------------------------------------------#
+# Leitura do banco de dados 
+data_ab_im <- read.csv("dataset_meta(30-01-23).csv", header = TRUE, sep = ";")
+data_ab_im <- data_ab_im %>%
+  mutate(tick_stage = case_when(
+    tick_stage == "a" ~ "Adults",
+    tick_stage == "n" ~ "Nymphs",
+    tick_stage == "l" ~ "Larvae",
+    TRUE ~ tick_stage
+  ))
+# Corrigindo o tipo das variáveis
+data_ab_im <- data_ab_im %>% 
+  mutate(id = as.factor(id),
+         id_paper = as.factor(id_paper),
+         tick_species = as.factor(tick_species),
+         tick_stage = as.factor(tick_stage),
+         host = as.factor(host),
+         h_family = as.factor(h_family),
+         index = as.factor(index),
+         lat = as.numeric(lat))
+
+#Selecionando variaveis de interesse
+str(data_ab_im)
+data_ab_im2 <- data_ab_im %>% 
+  select(id, id_paper, author, year, h_family, index, hosp_seca, hosp_chuv,
+         tick_species, tick_stage, n_tickseca, mean_seca, sd1, n_tickchuvosa, mean_chuvosa,
+         sd2, log, lat, alt)
+
+# Cálculo de Tamanho de efeito 
+attach(data_ab_im2) 	# Adicionando 1 em todas medidas para evitar erro no modelo ###
+data_ab_im2$mean_seca <- mean_seca + 1
+data_ab_im2$n_tickseca <- n_tickseca + 1   
+data_ab_im2$sd1 <- sd1 + 1                 
+data_ab_im2$mean_chuvosa <- mean_chuvosa + 1 
+data_ab_im2$n_tickchuvosa <- n_tickchuvosa + 1
+data_ab_im2$sd2 <- sd2 + 1                    
+# Calculo de Hedges' d
+d <- ((data_ab_im2$mean_seca - data_ab_im2$mean_chuvosa) /
+        sqrt(((data_ab_im2$n_tickseca - 1)*data_ab_im2$sd1^2 + 
+                (data_ab_im2$n_tickchuvosa - 1)*data_ab_im2$sd2^2)/
+               (data_ab_im2$n_tickseca + data_ab_im2$n_tickchuvosa - 2)))*
+  (1 - 3 / (4 *(data_ab_im2$n_tickseca + data_ab_im2$n_tickchuvosa - 2) - 1))
+summary(d)
+hist(d)
+data_ab_im2['d'] <- c(d)
+# Calculating the r value
+r = data_ab_im2$d /
+  (sqrt(data_ab_im2$d^2 + 
+          (((data_ab_im2$n_tickseca + data_ab_im2$n_tickchuvosa)^2)/
+             (data_ab_im2$n_tickseca*data_ab_im2$n_tickchuvosa))))
+summary(r)
+# Calculating Zr
+Zr = 0.5 * log((1 + r) / (1 - r))
+summary(Zr)
+hist(Zr)
+data_ab_im2['Zr'] <- c(Zr)
+# Calculating the sampling variance
+Zrsv <- 1 / (data_ab_im2$n_tickseca + data_ab_im2$n_tickchuvosa - 3)
+data_ab_im2['Zrsv'] <- c(Zrsv)
+summary(Zrsv)
+hist(Zrsv)
+# Correcting some sampling variances
+# In order to obtain sampling variances, some values were initially divided by zero. I thus transform them into 1.00, which is the maximum possible value for the sampling variance in this case
+data_ab_im2$Zrsv[data_ab_im2$Zrsv == "Inf"] <- 1
+summary(data_ab_im2$Zrsv)
+# Checking whether there are missing values
+plot_missing(data_ab_im2)
+plot(Zr, Zrsv) # Check it once again
+boxplot(Zr)
+# Testando presença de outliers
+test <- rosnerTest(data_ab_im2$Zr)
+test
+# Excluding the first outlier
+data_ab_im2.2 <- data_ab_im2[(data_ab_im2$id != "22"),]
+summary(data_ab_im2.2)
+# Excluding the second outlier
+data_ab_im2.2 <- data_ab_im2.2[(data_ab_im2.2$id != "24"),]
+summary(data_ab_im2.2)
+
+### Reshaping species ids
+data_ab_im2.2$tick_species <- as.factor(data_ab_im2.2$tick_species)
+
+# Manipulação de dados de filogenia
+# Leitura de arquivo com filogenia do genero 
+amb_tree <- read.nexus("infile.nex.con.tre")
+amb_tree$tip.label <- str_replace(amb_tree$tip.label, "_", ". ")
+# Creating phylogeny column on dataframe (same data found in species column)
+data_ab_im2.2$phylogeny <- data_ab_im2.2$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% data_ab_im2.2$tick_species))
+# Plotting the phylogeny
+par(cex=0.5)
+plot(Tree, cex=0.5);axisPhylo()
+# Including nodes identification
+y <- makeNodeLabel(Tree)
+plot.phylo(y, show.node.label = T, cex=0.5);axisPhylo()
+# Creating a document for a phylogeny with nodes
+write.tree(y, "phyloRafael.txt")
+# Making the phylogeny ultrametric
+x2 <- read.tree("phyloRafael.txt")
+Tree2 <- chronos(x2, lambda=0) # "Lambda is the rate-smoothing parameter.  Generally, we want lambda to be small, so there is very little smoothing  See here (citation at bottom): http://www.justinbagley.org/1226/update-new-functions-for-generating-starting-trees-for-beast-or-starbeast-in-r" from http://brettkvo.com/how-to-create-a-ultrametric-dichotomous-phylogeny-in-r-using-vertlife-org-or-birdtree-org/
+#Checking if it is ultrametric
+is.ultrametric(Tree2)
+plot(Tree2)
+# Saving as a new document
+write.tree(Tree2, "Tree2.txt")
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% data_ab_im2.2$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+##Verificando espécies do dataset ausentes na filogenia
+Tree2$tip.label <- str_replace(Tree2$tip.label, "_", " ")
+table(data_ab_im2.2$tick_species)
+tree_species <- Tree2$tip.label
+data_ab_im2.2$tick_species <- as.character(data_ab_im2.2$tick_species)
+# Obtenção a lista de espécies únicas do seu data frame
+data_frame_species <- unique(data_ab_im2.2$tick_species)
+# Identificação das espécies ausentes na árvore
+especies_ausentes <- data_frame_species[!data_frame_species %in% tree_species]
+
+# espécies ausentes
+if (length(especies_ausentes) > 0) {
+  cat("Espécies ausentes na árvore:\n")
+  print(especies_ausentes)
+} else {
+  cat("Todas as espécies no data frame estão presentes na árvore.\n")
+}
+data_ab_im2.2$tick_species <- as.factor(data_ab_im2.2$tick_species)
+
+#-------------------------------------------------------------------#
+#					 Análises para Abundância média 
+#-------------------------------------------------------------------#
+abund_med <- data_ab_im2.2 %>% 
+  filter(index == "abm")
+
+# Excluding A_sp, A. hadanii and A_tonelliae (Não constam na filogenia)
+abund_med4 <- abund_med %>%
+  filter(tick_species != "A. sp" & tick_species != "A. tonelliae" & tick_species != "A. hadanii")
+summary(abund_med4$tick_stage)
+# abund_med4 contains the following:
+# adults: 24 effect sizes from eight tick species
+# larvae: 49 effect sizes from 14 tick species
+# nymphs: 58 effect sizes from 15 tick species
+# total: 131 effect sizes from 16 tick species
+# Running a hypothetical model on mean abundance
+glimpse(abund_med4)
+# Checking NA's
+plot_missing(abund_med4)
+attach(abund_med4)
+
+# Modelo A1 - Geral com filogenia (considerando todos os estágios) 
+modeloA1 <- rma.mv(Zr,
+                       Zrsv,
+                       random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt), 
+                       mods = ~ tick_stage, 
+                       R = list(phylogeny = cor.max), 
+                       method = "REML", 
+                       data = abund_med4)
+summary(modeloA1)
+# Interpretação:
+# Em comparação com adultos, a abund?ncia média de larvas e ninfas é desproporcionalmente maior na estação seca do que na estaçãoo chuvosa.        
+
+## Rodando agora sem intercepto, para obter os valores espec?ficos de larvas e ninfas
+modeloA1.2 <- rma.mv(Zr,
+                         Zrsv,
+                         random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                         mods = ~ tick_stage - 1, 
+                         R = list(phylogeny = cor.max), 
+                         method = "REML", 
+                         data = abund_med4)
+summary(modeloA1.2)
+# Interpretação:
+# Larvas efetivamente apresentam maior abundância média da estação seca. Adultos e ninfas não diferem de zero
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)
+i2_ml(modeloA1) # Altitude responde pela maior parte da variação 
+
+# Egger's regression (following Nakagawa & Santos, 2012)
+abund_med4$wi <- 1/ (abund_med4$Zrsv)
+egger1.1 <- lm(residuals.rma(modeloA1)~abund_med4$wi)
+summary(egger1.1)
+# há viés p < 0.05, com falta de tamanhos de efeitos positivos e com baixa precisão
+## Figures 
+tiff("plot_forest/forestA1.tiff", units="in", width=8, height=5, res=300)
+m1 <- orchaRd::orchard_plot(modeloA1.2, mod="tick_stage", group = "tick_stage", 
+                            xlab = "Effect Size (Zr)", trunk.size = 5, angle = 360,
+                            transfm = "tanh")
+m1
+dev.off()
+# Modelo A1.3 - efeito da altitude
+modeloA1.3 <- rma.mv(Zr,
+                       Zrsv,
+                       random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | tick_stage), 
+                       mods = ~ alt, 
+                       R = list(phylogeny = cor.max), 
+                       method = "REML", 
+                       data = abund_med4)
+summary(modeloA1.3)
+# Apesar da altitude explicar boa parte da variação, não há um padrão direcional (abundância média não decresce ou cresce de acordo com a altitude)
+tiff("plot_i2/Ai1.tiff", units="in", width=8, height=5, res=300)
+i1 <- orchaRd::bubble_plot(modeloA1.3,
+                     mod = "alt", group = "tick_stage",
+                     xlab = "Altitude",
+                     ylab = "Effect Size (Zr)",
+                     legend.pos = "top.left") +
+  geom_point(data = abund_med4, aes(x = alt, y = Zr, color = tick_stage,
+                                    size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i1
+dev.off()
+### Modelo A2 - Geral sem filogenia (inclui A_sp, A_hadanii e A_tonelliae) 
+summary(abund_med$tick_stage)
+# adults: 28 effect sizes from 10 tick species
+# larvae: 91 effect sizes from 16 tick species
+# nymphs: 61 effect sizes from 17 tick species
+# total: 180 effect sizes from 19  tick species
+modeloA2.1 <- rma.mv(Zr,
+                       Zrsv,
+                       random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt, ~1|tick_species),
+                       mods = ~ tick_stage, 
+                       method = "REML", 
+                       data = abund_med)
+modeloA2.1
+# Interpretação:
+# Em comparação com adultos, cuja abundância média é maior na estação chuvosa, a abundância média de larvas e ninfas é desproporcionalmente  maior na estação seca do que na estação chuvosa.   
+
+# Rodando agora sem intercepto, para obter os valores espec?ficos de larvas e ninfas
+modeloA2.2 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt, ~1| tick_species),
+                     mods = ~ tick_stage - 1, 
+                     method = "REML", 
+                     data = abund_med)
+summary(modeloA2.2)
+# Interpretação:
+# Larvas efetivamente apresentam maior abundância média da estação seca. Adultos apresentam maior abundância na estação chuvosa. Ninfas não diferem entre estações, embora apresentem maior abundância na estação seca do que adultos (vide modelo 2.1.2)
+
+##Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:https://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate
+i2_ml(modeloA2.2)
+# Novamente, altitude responde pela maior parte da varia??o
+
+# Egger's regression (following Nakagawa & Santos, 2012)
+abund_med$wi <- 1/ (abund_med$Zrsv)
+egger2.1 <- lm(residuals.rma(modeloA2.1)~abund_med$wi)
+summary(egger2.1)
+# Mesmo com a inclus?o dos dados adicionais, continua havendo viés (p < 0,05), com falta de tamanhos de efeito positivos e com baixa precisão
+# Figures 
+tiff("plot_forest/forestA2.tiff", units="in", width=8, height=5, res=300)
+m2 <- orchaRd::orchard_plot(modeloA2.2, mod="tick_stage", group = "tick_stage", 
+                            xlab = "Effect Size (Zr)", trunk.size = 5, angle = 360,
+                            transfm = "tanh")
+m2
+dev.off()
+# Modelo A2.3 - efeito da altitude
+modeloA2.3 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | tick_stage, ~1 | tick_species),
+                     mods = ~ alt, 
+                     method = "REML", 
+                     data = abund_med)
+summary(modeloA2.3)
+# Interpretação: novamente, apesar da altitude explicar boa parte da variação, não há um padrãoo direcional (abundância média não decresce ou cresce de acordo com a altitude)
+tiff("plot_i2/Ai2.tiff", units="in", width=8, height=5, res=300)
+i2 <- orchaRd::bubble_plot(modeloA2.3,
+                           mod = "alt", group = "tick_stage",
+                           xlab = "Altitude",
+                           ylab = "Effect Size (Zr)",
+                           legend.pos = "top.left") +
+  geom_point(data = abund_med4, aes(x = alt, y = Zr, color = tick_stage,
+                                    size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i2
+dev.off()
+# Modelo A3 - Larva com filogenia
+larv_ab_phl <- abund_med4 %>% filter(tick_stage == "Larvae") # utilizado apenas espécies que constam na filogenia
+
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% larv_ab_phl$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model (already with no intercept) 
+modeloA3 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   R = list(phylogeny = cor.max),  
+                   method = "REML", 
+                   data = larv_ab_phl)
+summary(modeloA3)
+
+# Interpretação:
+#A. sculptum apresentam maiores abm na estação seca. As demais, não diferem entre estações.
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:https://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate
+i2_ml(modeloA3)
+#Heterogeneidade explicada pela id_paper, lat e alt
+modeloA3.2 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | phylogeny, ~1 | lat, ~1 | h_family, ~1 | tick_species),
+                     mods = ~ alt, 
+                     R = list(phylogeny = cor.max),  
+                     method = "REML", 
+                     data = larv_ab_phl)
+summary(modeloA3.2)
+# Interpretação: novamente, apesar da altitude explicar boa parte da variação, não há um padrão direcional (abundância média não decresce ou cresce de acordo com a altitude)
+tiff("plot_i2/Ai3.tiff", units="in", width=8, height=5, res=300)
+i3.1 <- orchaRd::bubble_plot(modeloA3.2,
+                            mod = "alt", group = "tick_stage",
+                            xlab = "Altitude",
+                            ylab = "Effect Size (Zr)",
+                            legend.pos = "top.left") +
+  geom_point(data = larv_ab_phl, aes(x = alt, y = Zr, color = tick_species,
+                                    size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i3.1
+dev.off()
+## Rodando o modelo
+modeloA3.3 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | alt, ~1 | h_family, ~1 | phylogeny, ~1 | tick_species),
+                     mods = ~ lat,  
+                     R = list(phylogeny = cor.max), 
+                     method = "REML", 
+                     data = larv_ab_phl)
+summary(modeloA3.3)
+# Interpretação: Latitude não apresentou resultados significativos
+
+# Egger's regression (following Nakagawa & Santos, 2012)
+larv_ab_phl$wi <- 1/ (larv_ab_phl$Zrsv)
+egger2.1 <- lm(residuals.rma(modeloA3)~larv_ab_phl$wi)
+summary(egger2.1)
+#p>0,05 não há viés
+
+## Figure
+tiff("plot_forest/forestA3.tiff", units="in", width=8, height=5, res=300)
+m3 <- orchaRd::orchard_plot(modeloA3, mod="tick_species",
+                            group = "tick_species", 
+                            xlab = "Effect Size (Zr)", trunk.size = 5, angle = 360,
+                            transfm = "tanh")+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m3
+dev.off() 
+
+# Modelo A4 para larvas mas sem filogenia 
+larv_ab <- abund_med %>% filter(
+  tick_stage == "Larvae" & tick_species != "A. sp")
+
+summary(larv_ab$tick_species)
+modeloA4 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   method = "REML", 
+                   data = larv_ab)
+summary(modeloA4)
+
+# Interpretação:
+# A. sculptum são mais abundantes na estação seca. As demais espécies não diferem entre estações.
+
+##Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloA4)
+#Heterogeneidade explicada pela alt
+
+modeloA4.2 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | tick_species),
+                     mods = ~ alt, 
+                     method = "REML", 
+                     data = larv_ab)
+summary(modeloA4.2)
+# Interpretação:
+# novamente, apesar da altitude explicar boa parte da variação, não há um padrão direcional (abundância média não decresce ou cresce de acordo com a altitude)
+tiff("plot_i2/Ai4.tiff", units="in", width=8, height=5, res=300)
+i4 <- orchaRd::bubble_plot(modeloA4.2,
+                             mod = "alt", group = "tick_stage",
+                             xlab = "Altitude",
+                             ylab = "Effect Size (Zr)",
+                             legend.pos = "top.left") +
+  geom_point(data = larv_ab, aes(x = alt, y = Zr, color = tick_species,
+                                     size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i4
+dev.off()
+#Y# Egger's regression (following Nakagawa & Santos, 2012)
+larv_ab$wi <- 1/ (larv_ab$Zrsv)
+egger4.1 <- lm(residuals.rma(modeloA4)~larv_ab$wi)
+summary(egger4.1)
+# não há viés p > 0,05
+
+## Figure
+tiff("plot_forest/forestA4.tiff", units="in", width=8, height=5, res=300)
+m4 <- orchaRd::orchard_plot(modeloA4,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m4
+dev.off() 
+
+### Modelo A5 - Ninfa com filogenia ###
+ninf_ab_phl <- abund_med4 %>% filter(tick_stage == "Nymphs") ###utilizado apenas espécies que constam na filogenia##
+summary(ninf_ab_phl$tick_species)
+# Creating phylogeny column on dataframe (same data found in species column)
+ninf_ab_phl$phylogeny <- ninf_ab_phl$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% ninf_ab_phl$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model already with no intercept
+modeloA5 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1 |phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data = ninf_ab_phl)
+summary(modeloA5)
+# Interpretação:
+#A. rotundatum e A. neumanni apresentam maiores abm na estação seca. A. ovale tende a ser maior na estação seca. As demais não diferem entre estações.
+
+##Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloA5)
+# Boa parte da heterogeneidade se deve a altitude
+
+#N# Egger's regression (following Nakagawa & Santos, 2012)
+ninf_ab_phl$wi <- 1/ (ninf_ab_phl$Zrsv)
+egger5.1 <- lm(residuals.rma(modeloA5)~ninf_ab_phl$wi)
+summary(egger5.1)
+# não há viés p > 0,05
+## Figure
+tiff("plot_forest/forestA5.tiff", units="in", width=8, height=5, res=300)
+m5 <- orchaRd::orchard_plot(modeloA5,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m5
+dev.off() 
+
+# Running a model to check altitude effect
+modeloA5.3 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1 |phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family),
+                     mods = ~ alt, 
+                     R = list(phylogeny = cor.max), 
+                     method = "REML", 
+                     data = ninf_ab_phl)
+summary(modeloA5.3)
+# A abundância média de ninfas é menor na estação seca conforme a altitude aumenta, mas o efeito é muito pequeno.
+tiff("plot_i2/Ai5.tiff", units="in", width=8, height=5, res=300)
+i5 <- orchaRd::bubble_plot(modeloA5.3,
+                           mod = "alt", group = "tick_species",
+                           xlab = "Altitude",
+                           ylab = "Effect Size (Zr)",
+                           legend.pos = "top.left") +
+  geom_point(data = ninf_ab_phl, aes(x = alt, y = Zr, color = tick_species,
+                                    size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i5
+dev.off()
+### Modelo A6 - Ninfa sem filogenia (inclui A_hadanii e A_tonelliae) ####
+ninf_ab <- abund_med %>% filter(tick_stage == "Nymphs" & tick_species != "A. sp")
+
+modeloA6 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   method = "REML", 
+                   data = ninf_ab)
+summary(modeloA6)
+# Interpretação:
+# A. neumanni, A. ovale e A. rotundatum são mais abundantes na estação seca. A. sculptum  tende a ser mais abundante na chuvosa. As demais não diferem entre estações
+
+##Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloA6)
+#a heterogeneidade se deve a altitude
+
+#N# Egger's regression (following Nakagawa & Santos, 2012)
+ninf_ab$wi <- 1/ (ninf_ab$Zrsv)
+egger6.1 <- lm(residuals.rma(modeloA6)~ninf_ab$wi)
+summary(egger6.1)
+# não há viés p > 0,05
+## Figures
+tiff("plot_forest/forestA6.tiff", units="in", width=8, height=5, res=300)
+m6 <- orchaRd::orchard_plot(modeloA6,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m6
+dev.off() 
+
+# Running a model to check altitude effect
+model_ninf6.3 <- rma.mv(Zr,
+                        Zrsv,
+                        random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | tick_species),
+                        mods = ~ alt, 
+                        method = "REML", 
+                        data = ninf_ab)
+summary(model_ninf6.3)
+# O resultado é basicamente o mesmo do modelo com filogenia.
+tiff("plot_i2/Ai6.tiff", units="in", width=8, height=5, res=300)
+i6 <- orchaRd::bubble_plot(model_ninf6.3,
+                           mod = "alt", group = "tick_species",
+                           xlab = "Altitude",
+                           ylab = "Effect Size (Zr)",
+                           legend.pos = "top.left") +
+  geom_point(data = ninf_ab, aes(x = alt, y = Zr, color = tick_species,
+                                     size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i6
+dev.off()
+### Modelo A7 - Adultos com filogenia ###
+adult_phl <- abund_med4 %>% filter(tick_stage == "Adults") ###utilizado apenas espécies que constam na filogenia##
+summary(adult_phl$tick_species)
+
+# Creating phylogeny column on dataframe (same data found in species column)
+adult_phl$phylogeny <- adult_phl$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% adult_phl$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model already with no intercept
+modeloA7 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data = adult_phl,
+                   verbose=TRUE, control=list(rel.tol=1e-8))
+summary(modeloA7)
+# Interpretação:
+# Nenhuma espécie tem sazonalidade marcada
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloA7)
+# Latitude responde por quase toda a variação
+modeloA7.2 <- rma.mv(Zr,
+                             Zrsv,
+                             random = list(~1 | phylogeny, ~1| id_paper, ~1 | h_family, ~1 | alt),
+                             mods = ~ lat, 
+                             R = list(phylogeny = cor.max), 
+                             method = "REML", 
+                             data = adult_phl)
+summary(modeloA7.2)
+# Egger's regression (following Nakagawa & Santos, 2012)
+adult_phl$wi <- 1/ (adult_phl$Zrsv)
+egger7.1 <- lm(residuals.rma(modeloA7)~adult_phl$wi)
+summary(egger7.1)
+# não há viés p < 0,05
+
+# Figure
+tiff("plot_forest/forestA7.tiff", units="in", width=8, height=5, res=300)
+m7 <- orchaRd::orchard_plot(modeloA7,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m7
+dev.off() 
+
+### Modelo A8 - Adultos sem filogenia (inclui A_hadanii e A_tonelliae) ####
+adult_ab <- abund_med %>% filter(tick_stage == "Adults")
+modeloA8 <- rma.mv(Zr,
+                         Zrsv,
+                         random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                         mods = ~ tick_species - 1, 
+                         method = "REML", 
+                         data = adult_ab)
+summary(modeloA8)
+# Interpretação:
+# Nenhuma espécie com sazonalidade marcada.
+
+##Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloA8)
+# I^2 explicada pela latitude
+modeloA8.2 <- rma.mv(Zr,
+                         Zrsv,
+                         random = list(~1| id_paper, ~1 |tick_species, ~1 | h_family, ~1 | alt),
+                         mods = ~ lat, 
+                         method = "REML", 
+                         data = adult_ab)
+summary(modeloA8.2)
+#N# Egger's regression (following Nakagawa & Santos, 2012)
+adult_ab$wi <- 1/ (adult_ab$Zrsv)
+egger8.1 <- lm(residuals.rma(modeloA8)~adult_ab$wi)
+summary(egger8.1)
+# não há viés p > 0,05
+
+## Figure
+tiff("plot_forest/forestA8.tiff", units="in", width=8, height=5, res=300)
+m8 <- orchaRd::orchard_plot(modeloA8,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m8
+dev.off()
+#-------------------------------------------------------------------#
+#				 Fim da análise para abundância média				#
+#-------------------------------------------------------------------#
+
+#-------------------------------------------------------------------#
+# 					Análises para intensidade média					#
+#-------------------------------------------------------------------#
+int_med <- data_ab_im2.2 %>% 
+  filter(index == "im")
+int_med <- subset(int_med, tick_stage != "Adults") #poucos adultos na base de dados
+int_med2 <- subset(int_med, tick_species != "A. sp")
+summary(int_med2$tick_stage)
+
+# Creating phylogeny column on dataframe (same data found in species column)
+int_med2$phylogeny <- int_med2$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% int_med2$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+plot_missing(int_med2)
+attach(int_med2)
+
+# Modelo B1 - Running the model
+# Larvae: 16 effect sizes, six species
+# Nymphs: 17 effect sizes, eight species
+modeloB1 <- rma.mv(Zr,
+				   Zrsv,
+                   slab = tick_stage,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_stage, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data = int_med2)
+summary(modeloB1)
+# Interpretação:
+# Em comparação com ninfas, a intensidade média de larvas é levemente maior na estação chuvosa do que na estação seca. 
+
+## Rodando agora sem intercepto
+modeloB1.2 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                     mods = ~ tick_stage - 1, 
+                     R = list(phylogeny = cor.max), 
+                     method = "REML", 
+                     data = int_med2)
+summary(modeloB1.2)
+# Interpretação:
+# Larvas e ninfas não diferem entre estações.
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloB1.2)
+# Most of the variation is based on host family. However, there are few effect sizes per host family to run a model.
+
+#Y# Egger's regression (following Nakagawa & Santos, 2012)
+int_med2$wi <- 1/ (int_med2$Zrsv)
+egger9 <- lm(residuals.rma(modeloB1)~int_med2$wi)
+summary(egger9)
+# há viés (p < 0,05), com falta de valores positivos com baixa precis?o
+
+## Figures 
+tiff("plot_forest/forestB1.tiff", units="in", width=8, height=5, res=300)
+m9 <- orchaRd::orchard_plot(modeloB1, mod="tick_stage", group = "tick_stage", 
+                               xlab = "Effect Size (Zr)", trunk.size = 5,
+                               transfm = "tanh")
+m9
+dev.off()
+### Modelo B2 - Geral sem filogenia (inclui A_sp) ###
+# Larvae: 39 effect sizes, seven species
+# Nymphs: 18 effect sizes, nine species
+
+modeloB2 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt, ~1 | tick_species),
+                   mods = ~ tick_stage, 
+                   method = "REML", 
+                   data = int_med)
+modeloB2
+# Interpretação:
+# A intensidade média de larvas é menor na estação seca do que a de ninfas.
+
+## Rodando agora sem intercepto, para obter os valores específicos de larvas e ninfas
+modeloB2.2 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt, ~1 | tick_species),
+                     mods = ~ tick_stage - 1, 
+                     method = "REML", 
+                     data = int_med)
+summary(modeloB2.2)
+# Interpretação:
+# A intensidade média de ninfas é maior na estação seca. Larvas não diferem entre estações.
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Nakagawa e Santos, 2012
+i2_ml(modeloB2)
+# A latitude é responsável por boa parte da variação 
+# Egger's regression (following Nakagawa & Santos, 2012)
+int_med$wi <- 1/ (int_med$Zrsv)
+egger10 <- lm(residuals.rma(modeloB2)~int_med$wi)
+summary(egger10)
+# há viés (p < 0,05), faltando valores positivos com baixa precisão
+# Figures 
+tiff("plot_forest/forestB2.tiff", units="in", width=8, height=5, res=300)
+m10 <- orchaRd::orchard_plot(modeloB2, mod="tick_stage", group = "tick_species", 
+                            xlab = "Effect Size (Zr)", trunk.size = 5,
+                            transfm = "tanh")
+m10
+dev.off()
+## Model on latitude effect
+modeloB2.3 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | tick_stage, ~1 | h_family, ~1 | alt, ~1 | tick_species),
+                     mods = ~ lat, 
+                     method = "REML", 
+                     data = int_med)
+modeloB2.3
+# Interpretação: 
+#a intensidade média é maior na estação seca e este padrão se intensifica aumenta conforme a latitude aumenta (mas note que o intervalo de ocorrência latitudinal da maioria das medidas é restrita).
+tiff("plot_i2/B1.tiff", units="in", width=8, height=5, res=300)
+i7 <- orchaRd::bubble_plot(modeloB2.3,
+                           mod = "lat", group = "tick_stage",
+                           xlab = "Latitude",
+                           ylab = "Effect Size (Zr)",
+                           legend.pos = "top.left") +
+  geom_point(data = int_med, aes(x = lat, y = Zr, color = tick_stage,
+                                 size = 1/sqrt(Zrsv)), alpha = 0.6)+ scale_color_discrete()
+i7
+dev.off()
+### Modelo B3 - Larvas com filogenia ###
+larv_im_phl <- int_med2 %>% filter(tick_stage == "Larvae") #utilizado apenas espécies que constam na filogenia
+larv_im_phl <- int_med2 %>% filter(tick_species != "A.sp")
+# Creating phylogeny column on dataframe (same data found in species column)
+larv_im_phl$phylogeny <- larv_im_phl$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% larv_im_phl$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model already with no intercept
+modeloB3 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1,  
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data = larv_im_phl)
+summary(modeloB3)
+# Interpretação:
+#nenhuma espécie difere entre estações
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Najakawa e Santos, 2012
+i2_ml(modeloB3)
+# Heterogeneidade atribuida a id_paper e alt.
+# Model on latitude effect
+modeloB3.2 <- rma.mv(Zr,
+                     Zrsv,
+                     random = list(~1| id_paper, ~1 | tick_stage, ~1 | h_family, ~1 | lat, ~1 | tick_species),
+                     mods = ~ alt, 
+                     method = "REML", 
+                     data = larv_im_phl)
+modeloB3.2
+# Interpretação: a intensidade média não varia em função a alt
+# Egger's regression (following Nakagawa & Santos, 2012)
+larv_im_phl$wi <- 1/ (larv_im_phl$Zrsv)
+egger11 <- lm(residuals.rma(modeloB3)~larv_im_phl$wi)
+summary(egger11)
+# não há viés (p > 0,05)
+## Figure
+tiff("plot_forest/forestB3.tiff", units="in", width=8, height=5, res=300)
+m11 <- orchaRd::orchard_plot(modeloB3,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m11
+dev.off()
+
+# Modelo B4 - Larvas sem filogenia
+larv_int <- int_med %>% filter(tick_stage == "Larvae")
+larv_int <- int_med %>% filter(tick_species != "A. sp")
+summary(larv_int$tick_species)
+
+modeloB4 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   method = "REML", 
+                   data = larv_int)
+summary(modeloB4)
+
+# Interpretação:
+# Nenhuma espécie difere entre estações
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Najakawa e Santos, 2012
+i2_ml(modeloB4)
+# altitude explica a maior parte da variação, poucos dados para fazer um modelo
+
+# Egger's regression (following Nakagawa & Santos, 2012)
+larv_int$wi <- 1/ (larv_int$Zrsv)
+egger12.1 <- lm(residuals.rma(modeloB4)~larv_int$wi)
+summary(egger12.1)
+# não há viés p > 0,05, mas há uma tendência para ausência de valores positivos e de baixa precisão
+## Figure
+tiff("plot_forest/forestB4.tiff", units="in", width=8, height=5, res=300)
+m12 <- orchaRd::orchard_plot(modeloB4,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m12
+dev.off() 
+
+# Modelo B5 - Ninfas com filogenia
+ninf_im_phl <- int_med2 %>% filter(tick_stage == "Nymphs") #utilizado apenas espécies que constam na filogenia##
+summary(ninf_im_phl$tick_species)
+# Creating phylogeny column on dataframe (same data found in species column)
+ninf_im_phl$phylogeny <- ninf_im_phl$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% ninf_im_phl$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model already with no intercept
+modeloB5 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt),
+                   mods = ~ tick_species - 1, 
+                   R = list(phylogeny = cor.max),
+                   method = "REML", 
+                   data = ninf_im_phl)
+summary(modeloB5)
+# Interpretação:
+# Nenhuma espécie difere entre estações
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Najakawa e Santos, 2012
+i2_ml(modeloB5)
+# id_paper e altitude explicam juntas a maior parte da varia??o
+
+#N# Egger's regression (following Nakagawa & Santos, 2012)
+ninf_im_phl$wi <- 1/ (ninf_im_phl$Zrsv)
+egger13 <- lm(residuals.rma(modeloB5)~ninf_im_phl$wi)
+summary(egger13)
+# não há viés p > 0,05
+## Figure
+tiff("plot_forest/forestB5.tiff", units="in", width=8, height=5, res=300)
+m13 <- orchaRd::orchard_plot(modeloB5,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m13
+dev.off() 
+# Modelo B6 - Ninfas sem filogenia 
+ninf_int <- int_med %>% filter(tick_stage == "Nymphs")
+ninf_int <- ninf_int %>% filter(tick_species != "A. sp")
+##modelo com altitude
+modeloB6 <- rma.mv(Zr,
+                   Zrsv,
+                   random = list(~1| id_paper, ~1 | lat, ~1 | h_family, ~1 | alt), 
+                   mods = ~ tick_species - 1, 
+                   method = "REML", 
+                   data = ninf_int)
+summary(modeloB6)
+# Interpretação:
+# Resultado é rigorosamente o mesmo de B5
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Najakawa e Santos, 2012
+i2_ml(modeloB6)
+# id_paper and alt explains almost all variation
+
+# Interpretação:
+# Resultado é rigorosamente o mesmo de B5
+
+# Egger's regression (following Nakagawa & Santos, 2012)
+ninf_int$wi <- 1/ (ninf_int$Zrsv)
+egger14.1 <- lm(residuals.rma(modeloB6)~ninf_int$wi)
+summary(egger14.1)
+# não há viés p > 0,05
+## Figure
+tiff("plot_forest/forestB6.tiff", units="in", width=8, height=5, res=300)
+m14 <- orchaRd::orchard_plot(modeloB6,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+m14
+dev.off() 
+
+#-------------------------------------------------------------------#
+#				Fim da análise de intensidade média					#
+#-------------------------------------------------------------------#
+
+#-------------------------------------------------------------------#
+# 				Análise de dados de prevalência						#
+#-------------------------------------------------------------------#
+#leitura do banco de dados####
+data_prev <- read.csv("dataset_prev(30-01-23).csv", header = TRUE, sep = ";")
+data_prev <- data_prev %>%
+  mutate(tick_stage = case_when(
+    tick_stage == "a" ~ "Adults",
+    tick_stage == "n" ~ "Nymphs",
+    tick_stage == "l" ~ "Larvae",
+    TRUE ~ tick_stage
+  ))
+
+# Corrigindo os tipos das variáveis
+glimpse(data_prev)
+# Convertendo as colunas para fatores e numéricos
+data_prev <- transform(data_prev, 
+                       id_paper = as.factor(id_paper),
+                       tick_species = as.factor(tick_species),
+                       tick_stage = as.factor(tick_stage),
+                       h.family = as.factor(h.family),
+                       lat = as.numeric(lat))
+# selecionando variáveis de interesse
+data_prev2 <- data_prev %>% 
+  select(id, id_paper, author, year, h.family, hosp_seca2, hosp_chuv2, tick_species,
+         tick_stage, h_s_par, h_c_par, log, lat, alt)
+
+attach(data_prev2)
+prevalencia <- escalc(measure="OR", 
+                      ai= h_s_par, bi= hosp_seca2 - h_s_par,
+                      ci= h_c_par, di= hosp_chuv2 - h_c_par,
+                      add = 1/2,
+                      to = "all",
+                      data=data_prev2,
+                      slab= paste0(tick_stage))
+View(prevalencia)
+# Checking whether there are missing values
+plot_missing(prevalencia)
+# Exclusão de NAs, id 135 e 136 est?o com informa??es faltantes para familia de hospedeiros.
+prevalencia <- prevalencia[(prevalencia$id != "135"),]
+prevalencia <- prevalencia[(prevalencia$id != "136"),]
+# Verificando outliers
+hist(prevalencia$yi)
+test <- rosnerTest(prevalencia$yi)
+test
+#id 1, id 2 e id 4 são considerados outiers, pelo teste de Rosner
+prevalencia2 <- slice(prevalencia, -c(1, 2))
+prevalencia3 <- prevalencia2[(prevalencia2$tick_species != "A. sp"),]
+str(prevalencia3)
+
+# Creating phylogeny column on dataframe (same data found in species column)
+prevalencia3$phylogeny <- prevalencia3$tick_species
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% prevalencia3$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+plot_missing(prevalencia3)
+attach(prevalencia3)
+##Verificando espécies do dataset ausentes na filogenia
+Tree2$tip.label <- str_replace(Tree2$tip.label, "_", " ")
+table(prevalencia3$tick_specie)
+tree_species <- Tree2$tip.label
+# Obtenção a lista de espécies únicas do seu data frame
+data_frame_species <- unique(prevalencia3$tick_specie)
+# Identificação das espécies ausentes na árvore
+especies_ausentes <- data_frame_species[!data_frame_species %in% tree_species]
+# espécies ausentes
+if (length(especies_ausentes) > 0) {
+  cat("Espécies ausentes na árvore:\n")
+  print(especies_ausentes)
+} else {
+  cat("Todas as espécies no data frame estão presentes na árvore.\n")
+}
+
+# Modelo C1 prevalência com filogenia 
+# Adults: seven effect sizes, five species
+# Larvae: 86 effect sizes, nine species
+# Nymphs: 64 effect sizes, 15 species
+modeloC1 <- rma.mv(yi,
+                   vi,
+                   slab = tick_stage,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h.family, ~1 | alt),
+                   mods = ~ tick_stage, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data = prevalencia3)
+summary(modeloC1)
+# Adultos são mais prevalentes na chuva, enquanto que larvas e ninfas são menos prevalentes na chuvosa.
+modeloC1.2 <- rma.mv(yi = yi,
+					V = vi,
+                    slab = tick_stage,
+                    random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h.family, ~1 | alt),
+                    mods = ~ tick_stage - 1, 
+                    R = list(phylogeny = cor.max), 
+                    method = "REML", 
+                    data = prevalencia3)
+summary(modeloC1.2)
+##Interpretação:
+# As chances de ocorr?ncia de hospedeiros parasitados por adultos são maiores na estação chuvosa, e o inverso é verdadeiro para imaturos.
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) - Seguindo Najakawa e Santos, 2012
+i2_ml(modeloC1)
+# A maior parte da variação é devida a altitude.
+
+#Y# Egger's regression (following Nakagawa & Santos, 2012)
+prevalencia3$wi <- 1/(prevalencia3$vi)
+egger16 <- lm(residuals.rma(modeloC1)~prevalencia3$wi)
+summary(egger16)
+## há viés (p < 0,05) -> falta de valores positivos com baixa precis?o
+tiff("plot_forest/forestC1.tiff", units="in", width=8, height=5, res=300)
+p1 <- orchaRd::orchard_plot(modeloC1, mod="tick_stage", group = "tick_species", 
+                            xlab = "Effect Size (Log OR)", trunk.size = 5, transfm = "none")
+p1
+dev.off()
+
+# Modelo com altitude
+modeloC1.3 <- rma.mv(yi = yi,
+                         V = vi,
+                         slab = tick_stage,
+                         random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h.family, ~1 | tick_stage),
+                         mods = ~ alt, 
+                         R = list(phylogeny = cor.max), 
+                         method = "REML", 
+                         data = prevalencia3)
+summary(modeloC1.3)
+# A prevalência não aumenta ou decresce com a altitude.
+
+# modelo C2 - prevalência sem filogenia,
+# Adults: seven effect sizes, five species
+# Larvae: 86 effect sizes, nine species
+# Nymphs: 64 effect sizes, 15 species
+modeloC2 <- rma.mv(yi = yi,
+                       V = vi,
+                       slab = tick_stage,
+                       random = list(~1| id_paper, ~1 | lat, ~1 | h.family, ~1 | alt, ~1 |tick_species),
+                       mods = ~ tick_stage, 
+                       method = "REML", 
+                       data = prevalencia2,
+                       verbose=TRUE, control=list(rel.tol=1e-8))
+modeloC2
+# Adultos são mais prevalentes na chuva, enquanto que larvas e ninfas são menos prevalentes na chuvosa.
+
+modeloC2.2 <- rma.mv(yi = yi,
+                         V = vi,
+                         slab = tick_stage,
+                         random = list(~1| id_paper, ~1 | lat, ~1 | h.family, ~1 | alt, ~1 |tick_species),
+                         mods = ~ tick_stage - 1, 
+                         method = "REML", 
+                         data = prevalencia2,
+                         verbose=TRUE, control=list(rel.tol=1e-8))
+modeloC2.2
+# Interpretação: 
+#Hospedeiros, durante a estação seca, estão mais sujeitos ao parasitismo por larvas e ninfas. Enquanto durante a estação chuvosa est?o mais sujeitos ao parasitismo por adultos
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modeloC2)
+# A maior parte da heterogeneidade se deve a altitude
+# Egger's regression (following Nakagawa & Santos, 2012)
+prevalencia2$wi <- 1/(prevalencia2$vi)
+egger17 <- lm(residuals.rma(modeloC2)~prevalencia2$wi)
+summary(egger17)
+# há viés p < 0,05 (falta de valores positivos com baixa precis?o)
+tiff("plot_forest/forestC2.tiff", units="in", width=8, height=5, res=300)
+p2 <- orchaRd::orchard_plot(modeloC2, mod="tick_stage", group = "tick_species", 
+                            xlab = "Effect Size ( Log OR)", trunk.size = 5)
+p2
+dev.off()
+# Modelo com altitude
+modeloC2.3 <- rma.mv(yi = yi,
+                         V = vi,
+                         slab = tick_stage,
+                         random = list(~1| id_paper, ~1 | lat, ~1 | h.family, ~1 |tick_species, ~1 | tick_stage),
+                         mods = ~ alt, 
+                         R = list(phylogeny = cor.max), 
+                         method = "REML", 
+                         data = prevalencia2)
+summary(modeloC2.3)
+# A prevalência não aumenta ou decresce com a altitude.
+
+# modelo C3 - Larvas (com filogenia) ####
+larv_prv_phil <- prevalencia3 %>% filter(tick_stage == "Larvae")
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% larv_prv_phil$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model
+modeloC3 <- rma.mv(yi = yi,
+                   V = vi,
+                   slab = tick_species,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h.family, ~1| alt),
+                   mods = ~ tick_species-1, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data =larv_prv_phil)
+modeloC3
+#Interpretação:
+#Larvas de A. dubitatum, A. longirostre e A. parvum parasitam mais hospedeiros na estação seca
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modeloC3)
+# Baixa heterogeneidade
+# Egger's regression (following Nakagawa & Santos, 2012)
+larv_prv_phil$wi <- 1/(larv_prv_phil$vi)
+egger17 <- lm(residuals.rma(modeloC3)~larv_prv_phil$wi)
+summary(egger17)
+# não há viés p > 0,05
+tiff("plot_forest/forestC3.tiff", units="in", width=8, height=5, res=300)
+p3 <- orchaRd::orchard_plot(modeloC3,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Log OR)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+p3
+dev.off() 
+# o modelo de larvas com filogênia englobam todas as espécies da base de dados
+# modelo C4 - prevalência de ninfas com filogenia
+ninf_prv_phil <- prevalencia3 %>% filter(tick_stage == "Nymphs")
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% ninf_prv_phil$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+# Running the model
+modeloC4 <- rma.mv(yi = yi,
+                   V = vi,
+                   slab = tick_species,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h.family, ~1| alt),
+                   mods = ~ tick_species - 1, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data =ninf_prv_phil)
+modeloC4
+#Iterpretação:
+#Ninfas de  A. coelebs, A. dubitatum, A. parvum e A. sculptum apresentam maior prevalência na estação seca
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modeloC4)
+# Altitude responde por boa parte de uma moderada heterogeneidade
+# Egger's regression (following Nakagawa & Santos, 2012)
+ninf_prv_phil$wi <- 1/(ninf_prv_phil$vi)
+egger20 <- lm(residuals.rma(modeloC4)~ninf_prv_phil$wi)
+summary(egger20)
+##há viés (p < 0,05)
+tiff("plot_forest/forestC4.tiff", units="in", width=8, height=5, res=300)
+p4 <- orchaRd::orchard_plot(modeloC4,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Log OR)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+p4
+dev.off() 
+
+# modelo C5 adultos com filogenia 
+adult_prv_phil <- prevalencia3 %>% filter(tick_stage == "Adults")
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% adult_prv_phil$tick_species))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+
+modeloC5 <- rma.mv(yi = yi,
+                   V = vi,
+                   slab = tick_species,
+                   random = list(~1 | phylogeny, ~1| id_paper, ~1 | lat, ~1 | h.family, ~1| alt),
+                   mods = ~ tick_species-1, 
+                   R = list(phylogeny = cor.max), 
+                   method = "REML", 
+                   data =adult_prv_phil)
+modeloC5
+#Interpretação:
+#Adultos de A. parvum possuem maiores chances de serem encontrados em hospedeiros na estação chuvosa.
+
+# Cálculo de heterogenidade I^2 
+i2_ml(modeloC5)
+# Egger's regression (following Nakagawa & Santos, 2012)
+adult_prv_phil$wi <- 1/(adult_prv_phil$vi)
+egger22 <- lm(residuals.rma(modeloC5)~adult_prv_phil$wi)
+summary(egger22)
+##não há viés (p > 0,05)
+tiff("plot_forest/forestC5.tiff", units="in", width=8, height=5, res=300)
+p5 <- orchaRd::orchard_plot(modeloC5,
+                            mod = "tick_species", 
+                            group = "tick_species",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+p5
+dev.off() 
+#------------------------------------------------------------------#
+#			Fim da análise de Prevalência 						   #	
+#------------------------------------------------------------------#
+
+#------------------------------------------------------------------#
+#			Análise de dados de ambiente 						   #	
+#------------------------------------------------------------------#
+#leitura e manipulação do banco de dados
+data_ambiente <- read_excel("1_dados_ambiente (RMN; 30.11.22).xlsx")
+data_ambiente <- data_ambiente %>%
+  mutate(tick_stage = case_when(
+    tick_stage == "a" ~ "Adults",
+    tick_stage == "n" ~ "Nymphs",
+    tick_stage == "l" ~ "Larvae",
+    TRUE ~ tick_stage
+  ))
+
+data_ambiente2 <- data_ambiente %>% 
+  select(id, id_paper, author, year, tick_specie, tick_stage, ses_seca, ses_chuvosa,
+         horas_seca, horas_chuvosa, n_tickseca, mean_seca, sd_seca, n_tickchuvosa,
+         mean_chuvosa, sd_chuvosa, method,log, lat, alt)
+str(data_ambiente)
+
+data_ambiente2 <- data_ambiente2 %>% 
+  mutate(id_paper = as.factor(id_paper),
+         lat = as.numeric(lat),
+         tick_specie = as.factor(tick_specie),
+         tick_stage = as.factor(tick_stage),
+         method =as.factor(method))
+
+str(data_ambiente2)
+summary(data_ambiente2)
+
+# Calculo do tamanho de efeito - Hedges'G
+attach(data_ambiente2) # é adicionado "1" a todas as variaveis que compoem o tamanho de efeito
+data_ambiente2$n_tickseca <- n_tickseca+1
+data_ambiente2$mean_seca <- mean_seca+1
+data_ambiente2$sd_seca <- sd_seca+1
+data_ambiente2$n_tickchuvosa <- n_tickchuvosa+1
+data_ambiente2$mean_chuvosa <- mean_chuvosa+1
+data_ambiente2$sd_chuvosa <- sd_chuvosa+1
+
+ambiente <- escalc(measure = "SMDH",
+                   m1i = mean_seca,
+                   sd1i = sqrt(sd_seca),
+                   n1i = n_tickseca,
+                   m2i = mean_chuvosa,
+                   sd2i = sqrt(sd_chuvosa),
+                   n2i = n_tickchuvosa,
+                   data = data_ambiente2)
+
+#Verificando valores ausentes
+plot_missing(ambiente)
+# Coluna com J - Fator de correçãoo (Poulin, 2020)
+# corrige tamanhos de amostra pequenos, dando mais peso as comparações com base em grandes amostras
+ambiente$j <- 1 - (3/(4*(ambiente$horas_seca+ambiente$horas_chuvosa-2)-1))
+attach(ambiente)
+hist(yi)
+shapiro.test(yi) #distribuição com ausência de normalidade
+
+#Conversão em Zr
+# Calculating the r value
+r = (ambiente$yi) /
+  (sqrt((ambiente$yi)^2 + 
+          (((ambiente$n_tickseca + ambiente$n_tickchuvosa)^2)/
+             (ambiente$n_tickseca*ambiente$n_tickchuvosa))))
+summary(r)
+# Calculating Zr
+Zr = 0.5 * log((1 + r) / (1 - r))
+summary(Zr)
+hist(Zr)
+ambiente['Zr'] <- c(Zr)
+# Calculating the sampling variance
+Zrsv <- 1 / (ambiente$n_tickseca + ambiente$n_tickchuvosa - 3)
+ambiente['Zrsv'] <- c(Zrsv)
+summary(Zrsv)
+hist(Zrsv)
+
+# Correcting some sampling variances
+# In order to obtain sampling variances, some values were initially divided by zero. I thus transform them into 1.00, which is the maximum possible value for the sampling variance in this case
+ambiente$Zrsv[ambiente$Zrsv == "Inf"] <- 1
+summary(ambiente$Zrsv)
+ambiente <- subset(ambiente, id != "1")
+options(scipen = 999)
+ad.test(ambiente$Zr) #distribuição com ausência de normalidade
+boxplot(ambiente$Zr)
+ambiente$tick_specie<- str_replace(ambiente$tick_specie, "_", ". ")
+
+# Verificando presença de outliers
+test <- rosnerTest(ambiente$Zr)
+test # sem outliers presentes
+
+# Creating phylogeny column on dataframe (same data found in species column)
+ambiente$phylogeny <- ambiente$tick_specie
+# Pruning the tree to the species that are in the data.frame
+Tree <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% ambiente$tick_specie))
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% ambiente$tick_specie))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+
+# Verificando espécies do dataset ausentes na filogenia
+Tree2$tip.label <- str_replace(Tree2$tip.label, "_", " ")
+table(ambiente$tick_specie)
+tree_species <- Tree2$tip.label
+# Obtenção a lista de espécies únicas do seu data frame
+data_frame_species <- unique(ambiente$tick_specie)
+# Identificação das espécies ausentes na árvore
+especies_ausentes <- data_frame_species[!data_frame_species %in% tree_species]
+# espécies ausentes
+if (length(especies_ausentes) > 0) {
+  cat("Espécies ausentes na árvore:\n")
+  print(especies_ausentes)
+} else {
+  cat("Todas as espécies no data frame estão presentes na árvore.\n")
+}
+## A. sp e A. tonelliae ausentes
+ambiente2 <- subset(ambiente, tick_specie != "A. sp")
+ambiente2 <- subset(ambiente2, tick_specie != "A. tonelliae")
+summary(ambiente2$tick_stage)
+
+# Modelo 1 - todos os estiágios - Modelo com filogenia
+# 41 Adultos
+# 3 Larvas
+# 26 Ninfas
+ambiente2.2 <- subset(ambiente2, tick_stage!="Larvae")
+plot_missing(ambiente2.2)
+# Excluindo dados de larvas, pois só existem 3 tamanhos de efeito
+modelo1 <- rma.mv(Zr*j,
+                  Zrsv*j,
+                  random = list(~1 | id_paper, ~1 | phylogeny, ~1 | method, ~1 | lat, ~1 | alt),
+                  mods = ~tick_stage,
+                  R = list(phylogeny = cor.max), 
+                  method = "REML", 
+                  data = ambiente2.2)
+summary(modelo1)
+
+#modelo sem intercepto
+modelo1.2 <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    random = list(~1 | id_paper, ~1 | phylogeny, ~1 | method, ~1 | lat, ~1 | alt),
+                    mods = ~tick_stage-1,
+                    R = list(phylogeny = cor.max), 
+                    method = "REML", 
+                    data = ambiente2.2)
+
+modelo1.2
+##Forest plot
+tiff("plot_forest/ambiente1.tiff", units="in", width=8, height=5, res=300)
+p1 <- orchaRd::orchard_plot(modelo1.2, mod="tick_stage", group = "tick_stage", 
+                            xlab = "Effect Size (Zr)", trunk.size = 5,
+                            transfm = "tanh")
+p1
+dev.off()
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modelo1)
+# A heterogeneidade é explicada principalmente pela filogenia (53%), seguida da variação dos artigos (22%) e latitude (19,2%)
+
+# Egger's regression (following Nakagawa & Santos, 2012)
+ambiente2.2$wi <- 1/ (ambiente2.2$Zrsv)
+egger1 <- lm(residuals.rma(modelo1)~ambiente2.2$wi)
+summary(egger1)
+#O p-valor acima de 0,05 indica que não há associação significativa entre o tamanho do efeito e a precisão. Isso sugere a aus?ncia de viés de publicação na meta-análise.
+
+# Interpretação:
+#Neste modelo, há diferença entre adultos e ninfas.  Apesar de adultos não possuirem estimativas de efeito significativas,ela se diferencia de ninfas. Ninfas são mais abundantes durante a estação seca. A maior parte da variabilidade dos tamanhos de efeitos são explicadas pela variação filogenética
+
+# Modelo 2 - Todos os estágios - Sem filogenia
+summary(ambiente$tick_stage)
+#inclusão de larvas em relação ao modelo anterior
+#Adultos 42; larvas 12; Ninfas 29
+modelo2 <- rma.mv(Zr*j,
+                  Zrsv*j,
+                  random = list(~1 | id_paper, ~1 | method, ~1 | lat, ~1 | alt),
+                  mods = ~tick_stage,
+                  method = "REML", 
+                  data = ambiente)
+
+modelo2
+str(ambiente)
+modelo2.1 <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    random = list(~1 | id_paper, ~1 | method, ~1 | lat, ~1 | alt),
+                    mods = ~tick_stage -1,
+                    method = "REML", 
+                    data = ambiente)
+
+modelo2.1
+tiff("plot_forest/ambiente2.tiff", units="in", width=8, height=5, res=300)
+p2 <- orchaRd::orchard_plot(modelo2.1, mod="tick_stage", group = "tick_stage", 
+                            xlab = "Effect Size (Zr)", trunk.size = 5,
+                            transfm = "tanh")
+p2
+dev.off()
+
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)) 
+i2_ml(modelo2.1)
+#I^2 = 99,63
+# A heterogeneidade é explicada pela latitude seguido pela latitude, seguido pela altitude
+modelo2.lat <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    random = list(~1 | id_paper, ~1 | method, ~1 | alt, ~1| tick_stage),
+                    mods = ~lat,
+                    method = "REML", 
+                    data = ambiente)
+
+modelo2.lat
+tiff("plot_i2/r1.tiff", units="in", width=8, height=5, res=300)
+r1<- orchaRd::bubble_plot(modelo2.lat,
+                     mod = "lat",
+                     group = "tick_stage",
+                     xlab = "Latitude", ylab = "Effect Size (ZR)",
+                     legend.pos = "top.left")
+r1
+dev.off()
+# MODELO COM ALT
+modelo2.alt <- rma.mv(Zr*j,
+                      Zrsv*j,
+                      random = list(~1 | id_paper, ~1 | method,~1 | lat, ~1| tick_stage),
+                      mods = ~alt,
+                      method = "REML", 
+                      data = ambiente)
+  
+modelo2.alt
+tiff("plot_i2/r1-2.tiff", units="in", width=8, height=5, res=300)
+r1.2 <- orchaRd::bubble_plot(modelo2.alt,
+                             mod = "alt",
+                             group = "tick_stage",
+                             xlab = "Altitude", ylab = "Effect Size (ZR)",
+                             legend.pos = "top.left")
+r1.2
+dev.off()
+# Egger's regression (following Nakagawa & Santos, 2012)
+ambiente$wi <- 1/ (ambiente$Zrsv)
+egger2 <- lm(residuals.rma(modelo2)~ambiente$wi)
+summary(egger2)
+#O p-valor menor de 0,05 indica que pode existir viés de publicação
+
+# Interpretação:
+# Larvas possuem tamanho de efeito direcionado a estação seca, adultos à chuvosa. No entanto, apesar de ninfas não apresentarem resultados significativos, seus ic's não sobrepoem aos ic's de adultos, indicando assim diferenças entre os dois estágios.
+#Em latitudes maiores, o tamanho de efeito observado é também maior. Isso indica que carrapatos são mais abundantes na seca em latitudes maiores. Para o aumento da altitude,existe uma pequena queda no tamanho de efeito.
+
+#Não vamos rodar modelos de larvas, poucos tamanhos de efeito.
+# Não vamos utilzar A. sp nos modelos de estudos de espécies, pois queremos saber o efeito de cada espécie.
+
+# modelo 4 Ninfas - filogenia 
+ambiente3 <- ambiente %>% filter(tick_specie != "A. sp")
+ninfa_fil <- ambiente2 %>% filter(tick_stage == "Nymphs")
+# Creating phylogeny column on dataframe (same data found in species column)
+ninfa_fil$phylogeny <- ninfa_fil$tick_specie
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% ninfa_fil$tick_specie))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+ninfa_fil$tick_specie <- as.factor(ninfa_fil$tick_specie)
+
+modelo4 <- rma.mv(Zr*j,
+                  Zrsv*j,
+                    random = list(~1 | id_paper, ~1 | phylogeny, ~1 | method, ~1 | lat, ~1 | alt),
+                    mods = ~tick_specie - 1,
+                    R = list(phylogeny = cor.max), 
+                    method = "REML", 
+                    data = ninfa_fil)
+modelo4
+##Forest plot
+tiff("plot_forest/ambiente3.tiff", units="in", width=8, height=5, res=300)
+p4 <- orchaRd::orchard_plot(modelo4,
+                            mod = "tick_specie", 
+                            group = "tick_specie",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+p4
+dev.off()
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modelo4)
+#i^2 = 98,68
+## ID explica a maior parte da heterogeneidade (34%), seguido pelos
+## métodos de coleta (30%)
+modelo4.met <- rma.mv(Zr*j,
+                  Zrsv*j,
+                  random = list(~1 | id_paper, ~1 | phylogeny, ~1 | lat, ~1 | alt),
+                  mods = ~method - 1,
+                  R = list(phylogeny = cor.max), 
+                  method = "REML", 
+                  data = ninfa_fil)
+modelo4.met
+tiff("plot_i2/r2.tiff", units="in", width=8, height=5, res=300)
+r2 <- orchard_plot(modelo4.met,
+                   group = "tick_specie", trunk.size = 5,
+                   mod = "method", xlab = "Effect Size (Zr)")
+r2
+dev.off()
+# Egger's regression (following Nakagawa & Santos, 2012)
+ninfa_fil$wi <- 1/ (ninfa_fil$Zr)
+ninfa_fil$wi[ninfa_fil$wi == "Inf"] <- 1
+egger4 <- lm(residuals.rma(modelo4)~ninfa_fil$wi)
+summary(egger4)
+# não há viés p>0,05
+
+# Interpretação:
+# Neste modelo, A. parvum apresentam maior ocorrência na estação seca, A. sculptum, possui valores próximos a 0,05
+# Além disso, o método de coleta C (Armadilha de co2), influencia os tamanhos de efeito positivamente.
+
+# modelo 5 ninfas - sem filogenia
+ninfa <- ambiente3 %>% filter(tick_stage == "Nymphs")
+
+modelo5.2 <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    random = list(~1 | id_paper, ~1 | method, ~1 | lat, ~1 | alt),
+                    mods = ~tick_specie-1,
+                    method = "REML", 
+                    data = ninfa)
+
+modelo5.2
+tiff("plot_forest/ambiente5.tiff", units="in", width=8, height=5, res=300)
+p5 <- orchaRd::orchard_plot(modelo5.2,
+                            mod = "tick_specie", 
+                            group = "tick_specie",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+p5
+dev.off()
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modelo5.2)
+#I^2 = 98,51
+# métodos e ID como principais fontes de heterogeneidade, seguidos pela lat
+modelo5.met <- rma.mv(Zr*j,
+                      Zrsv*j,
+                      random = list(~1 | id_paper, ~1 | tick_specie, ~1 | lat, ~1 | alt),
+                      mods = ~method - 1,
+                      method = "REML", 
+                      data = ninfa)
+modelo5.met
+tiff("plot_i2/r3.tiff", units="in", width=8, height=5, res=300)
+r3 <- orchard_plot(modelo5.met,
+                   group = "tick_specie", trunk.size = 5,
+                   mod = "method", xlab = "Effect Size (Zr)")
+r3
+dev.off()
+# Egger's regression (following Nakagawa & Santos, 2012)
+ninfa$wi <- 1/ (ninfa$Zrsv)
+egger5 <- lm(residuals.rma(modelo5.2)~ninfa$wi)
+summary(egger5)
+#O p-valor acima de 0,05 indica que não há associa??o significativa entre o tamanho do efeito e a precisão. Isso sugere a aus?ncia de viés de publica??o na meta-an?lise.
+
+#Interpretação:
+#Neste modelo, A. sculptum juntamente com A. parvum possuem maiores ocorrência durante a estação seca
+# Além disso, o método de coleta C (Armadilha de co2), quando utilizado influencia os tamanhos de efeito positivamente.
+
+# modelo 6 Adultos - filogenia
+adulto_fil <- ambiente2 %>% filter(tick_stage == "Adults")
+
+## Creating phylogeny column on dataframe (same data found in species column)
+adulto_fil$phylogeny <- adulto_fil$tick_specie
+# Pruning the tree to the species that are in the data.frame
+Tree2 <- drop.tip(amb_tree,which(!amb_tree$tip.label %in% adulto_fil$tick_specie))
+# Creating a correlation matrix derived from the phylogeny tree
+cor.max <- vcv(Tree2, cor = T)
+
+modelo6.2 <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    random = list(~1 | id_paper, ~1 | phylogeny, ~1 | method, ~1 | lat, ~1 | alt),
+                    mods = ~tick_specie - 1, 
+                    R = list(phylogeny = cor.max), 
+                    method = "REML", 
+                    data = adulto_fil)
+modelo6.2
+tiff("plot_forest/ambiente6.tiff", units="in", width=8, height=5, res=300)
+p6 <- orchaRd::orchard_plot(modelo6.2,
+                            mod = "tick_specie", 
+                            group = "tick_specie",
+                            xlab = "Effect size (Zr)", 
+                            alpha = 0.5, #transfm = "tanh",
+                            angle = 0, trunk.size = 5,
+                            cb = FALSE)+
+  theme(axis.text.y = element_text(face = "italic", color = "black"))
+p6
+dev.off()
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots))
+i2_ml(modelo6.2)
+#i^2 = 99,15
+# Heterogeneidade é explicada pela altitude seguido pela latitude
+modelo6.alt <- rma.mv(Zr*j,
+                      Zrsv*j,
+                      random = list(~1 | id_paper, ~1 | phylogeny, ~1 | method, ~1 | lat),
+                      mods = ~alt, 
+                      R = list(phylogeny = cor.max), 
+                      method = "REML", 
+                      data = adulto_fil,
+                      verbose=TRUE, control=list(rel.tol=1e-8)) #aumentar a cadeia de convergência
+
+modelo6.alt
+tiff("plot_i2/r4.tiff", units="in", width=8, height=5, res=300)
+r4<- orchaRd::bubble_plot(modelo6.alt,
+                          mod = "alt",
+                          group = "tick_specie",
+                          xlab = "Altitude", ylab = "Effect Size (ZR)",
+                          legend.pos = "top.left")
+r4
+dev.off()
+modelo6.lat <- rma.mv(Zr*j,
+                      Zrsv*j,
+                      random = list(~1 | id_paper, ~1 | phylogeny, ~1 | method, ~1 | alt),
+                      mods = ~lat, 
+                      R = list(phylogeny = cor.max), 
+                      method = "REML", 
+                      data = adulto_fil,
+                      verbose=TRUE, control=list(rel.tol=1e-8)) #aumentar a cadeia de convergência
+
+modelo6.lat
+tiff("plot_i2/r4-1.tiff", units="in", width=8, height=5, res=300)
+r4.1<- orchaRd::bubble_plot(modelo6.lat,
+                            mod = "lat",
+                            group = "tick_specie",
+                            xlab = "Laltitude", ylab = "Effect Size (ZR)",
+                            legend.pos = "top.left")
+r4.1
+dev.off()
+# Egger's regression (following Nakagawa & Santos, 2012)
+adulto_fil$wi <- 1/ (adulto_fil$Zrsv)
+egger6 <- lm(residuals.rma(modelo6.2)~adulto_fil$wi)
+summary(egger6)
+# não há viés p>0,05
+
+# Interpretação: 
+# A. naponense e A. sculptum possuem maior ocorrência na estação chuvosa. A. triste maior ocorrência na estação seca
+# O aumento da altitude proporciona descréscimo no tamanho de efeito, porém esse descréscimo é baixo. No entanto, o aumento da latitude provoca em aumento nos tamanhos de efeito
+
+# modelo 7 adultos - sem filogenia
+adulto <- ambiente3 %>% filter(tick_stage == "Adults")
+modelo7.1 <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    mods = ~tick_specie-1,
+                    random = list(~1 | id_paper, ~1 | method, ~1 | lat, ~1 | alt),
+                    method = "REML",
+                    data = adulto)
+
+modelo7.1
+#Cálculo de heterogeneidade - Seguindo Nakagawa e Santos, 2012, porém adapatado conforme:(https://daniel1noble.github.io/orchaRd/#examples-of-orchard-and-caterpillars-plots)
+i2_ml(modelo7.1)
+#I^2 = 99,09
+#Heterogeneidade sendo explicada principalmente pela altitude SEGUIDO PELA LAT
+modelo7.alt <- rma.mv(Zr*j,
+                    Zrsv*j,
+                    mods = ~alt,
+                    random = list(~1 | id_paper, ~1 | method, ~1 | lat, ~1 | tick_specie),
+                    method = "REML",
+                    data = adulto)
+
+modelo7.alt
+tiff("plot_i2/r5.tiff", units="in", width=8, height=5, res=300)
+r5<- orchaRd::bubble_plot(modelo7.alt,
+                          mod = "alt",
+                          group = "tick_specie",
+                          xlab = "Altitude", ylab = "Effect Size (ZR)",
+                          legend.pos = "top.left")
+r5
+dev.off()
+modelo7.lat <- rma.mv(Zr*j,
+                      Zrsv*j,
+                      mods = ~lat,
+                      random = list(~1 | id_paper, ~1 | method, ~1 | alt, ~1 | tick_specie),
+                      method = "REML",
+                      data = adulto)
+
+modelo7.lat
+tiff("plot_i2/r5-1.tiff", units="in", width=8, height=5, res=300)
+r5.1<- orchaRd::bubble_plot(modelo7.lat,
+                          mod = "lat",
+                          group = "tick_specie",
+                          xlab = "Latitude", ylab = "Effect Size (ZR)",
+                          legend.pos = "top.left")
+r5.1
+dev.off()
+# Egger's regression (following Nakagawa & Santos, 2012)
+adulto$wi <- 1/ (adulto$Zrsv)
+egger7 <- lm(residuals.rma(modelo7.1)~adulto$wi)
+summary(egger7)
+
+#O p-valor acima de 0,05 indica que não há associação significativa entre o tamanho do efeito e a precis?o. Isso sugere a aus?ncia de viés de publica??o na meta-an?lise.
+
+
+#interpretação:
+# A. parvum e A. triste com maiores ocorrências na estação seca. A. sculptum, A. ovale, A. naponense, A. incisum e A. dubitatum com maior ocorrÊncia na chuvosa
+# O aumento da altitude proporciona descréscimo no tamanho de efeito, porémesse descréscimo é baixo. No entanto, o aumento da latitude provoca em aumento nos tamanhos de efeito
+
+#------------------------------------------------------------------#
+#			Fim da Análise de dados de ambiente 				   #	
+#------------------------------------------------------------------#
