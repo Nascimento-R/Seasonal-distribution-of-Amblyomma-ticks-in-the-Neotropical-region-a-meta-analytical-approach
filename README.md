@@ -34,6 +34,8 @@ of Amblyomma ticks in the Neotropical region?
 ## Images
 
 ![Figure 1](fig1.png)
+Figure 1: PRISMA-EcoEvo protocol, including the stages of identification, screening, eligibility, and inclusion of studies based on predefined criteria.
+
 
 ## Main results
 
