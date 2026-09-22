@@ -66,4 +66,64 @@ of Amblyomma ticks in the Neotropical region?
 
 ## Main results
 
-...
+The meta-analysis synthesized evidence from 51 studies, comprising 90 effect sizes across 16 Amblyomma species.
+
+The available evidence was geographically concentrated within a limited number of countries in the Neotropical region, with most effect sizes occurring between approximately 15º and 30º latitude.
+
+Seasonal patterns were evaluated separately across tick life stages and response variables, including mean abundance, mean intensity, prevalence, and abundance of questing ticks.
+
+The analysis also showed the importance of considering phylogenetic relationships among Amblyomma species when estimating overall seasonal effects. Models incorporating phylogenetic dependence were therefore compared with models that did not account for this dependence.
+
+The results provide a quantitative synthesis of the available evidence on seasonal variation in Amblyomma populations and highlight geographic and taxonomic gaps in the current literature.
+
+## Repository structure
+.
+├── README.md
+├── figures/
+│   ├── fig1.png
+│   ├── fig2.png
+│   ├── fig3A.png
+│   ├── fig4A.png
+│   ├── fig5A.png
+│   ├── fig6A.png
+│   └── fig7A.png
+├── R/
+│   └── analysis scripts
+└── data/
+    └── datasets
+
+The exact repository structure may vary depending on the files made available with the project.
+
+## Reproducibility
+
+The statistical analyses were conducted in R.
+
+The project is organized to separate data, analysis scripts, and figures, facilitating reproducibility and allowing the analytical workflow to be inspected independently.
+
+Where permitted, the relevant datasets and R scripts are provided in this repository.
+
+## Research relevance
+
+This project demonstrates the application of quantitative methods to ecological and environmental data, including:
+
+Data extraction and organization from scientific literature
+Systematic review methodology
+Meta-analysis
+Statistical modelling
+Multilevel models
+Phylogenetic analysis
+Geographic data interpretation
+Data visualization
+Reproducible analysis in R
+
+These approaches can also be applied to broader environmental and biodiversity datasets where observations are collected across species, locations, seasons, and study designs.
+
+## Publication
+
+This analysis was developed as part of my PhD research in Veterinary Sciences at the Federal Rural University of Rio de Janeiro (UFRRJ).
+
+Nascimento, R. M., Macedo-Rego, R. C., Maturano, R., & Famadas, K. M. (2025). Seasonal dynamics of Amblyomma ticks in South America: A meta-analytical approach. Acta Tropica, 263, 107552.
+
+DOI: 10.1016/j.actatropica.2025.107552
+
+The article presents a systematic review and meta-analysis of seasonal patterns in Amblyomma ticks, using multilevel meta-analytical models to evaluate differences among larvae, nymphs, and adults. The study found distinct seasonal patterns among life stages, with larvae and nymphs occurring more frequently during the dry season and adults predominating during the rainy season.
