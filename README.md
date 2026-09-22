@@ -102,6 +102,8 @@ The project is organized to separate data, analysis scripts, and figures, facili
 
 Where permitted, the relevant datasets and R scripts are provided in this repository.
 
+Data available on: https://osf.io/5t4rw/files/osfstorage?view_only=dfe6ff922c30404786ee1b7672d5b454
+
 ## Research relevance
 
 This project demonstrates the application of quantitative methods to ecological and environmental data, including:
