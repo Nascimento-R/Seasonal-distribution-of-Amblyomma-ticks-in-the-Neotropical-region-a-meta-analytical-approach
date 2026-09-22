@@ -31,6 +31,10 @@ of Amblyomma ticks in the Neotropical region?
 - Data visualization
 - Meta-analysis
 
+## Images
+
+![Figure 1](fig1.png)
+
 ## Main results
 
 ...
