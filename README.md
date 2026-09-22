@@ -37,7 +37,7 @@ of Amblyomma ticks in the Neotropical region?
 
 **Figure 1:** PRISMA-EcoEvo protocol, including the stages of identification, screening, eligibility, and inclusion of studies based on predefined criteria.
 
-![Figure 2](fig2.tif)
+![Figure 2](fig2.png)
 
 **Figure 2:** Geographical distribution of the analyzed studies. Effect sizes were geographically concentrated in only a few countries within the studied region, mostly between latitudes 15º and 30º.
 
